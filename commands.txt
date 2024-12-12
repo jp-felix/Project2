@@ -1,0 +1,1 @@
+./build/scripts/run.sh client localhost 8080 user@example.com UPLOAD ./files/teste.txt

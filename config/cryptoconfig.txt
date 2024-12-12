@@ -1,0 +1,8 @@
+SymmetricKey=AES
+SymmetricMode=GCM
+SymmetricKeySize=256
+HMAC=SHA256
+ECCCurve=secp256r1
+HASH=SHA256
+EncryptionKey=0123456789ABCDEF0123456789ABCDEF
+IV=0123456789abcdef
