@@ -31,14 +31,8 @@ public class SHPClient {
         try (Socket socket = new Socket(host, port)) {
             DataInputStream in = new DataInputStream(socket.getInputStream());
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            // String timestamp = Instant.now().toString(); // Current timestamp
-            String timestamp = "2024-12-12T20:14:56.779656500Z"; //for testing replay
-
-            // String configFilePath = "config/cryptoconfig.txt";
-            // byte[] keyBytes = loadKeyFromConfig(configFilePath);
-            // System.out.println("Loaded Key Bytes (Server): " +
-            // Arrays.toString(keyBytes));
-            // SecretKeySpec keySpec = new SecretKeySpec(keyBytes, "AES");
+            String timestamp = Instant.now().toString(); // Current timestamp
+            // String timestamp = "2024-12-12T20:14:56.779656500Z"; //for testing replay
 
             System.out.println("[Client] Connected to server.");
 
