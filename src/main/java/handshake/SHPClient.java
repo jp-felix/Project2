@@ -2,17 +2,11 @@ package main.java.handshake;
 
 import java.io.*;
 import java.net.Socket;
-import java.security.InvalidAlgorithmParameterException;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.Arrays;
-import java.util.Properties;
-
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
 import javax.crypto.CipherOutputStream;
-import javax.crypto.NoSuchPaddingException;
 import javax.crypto.spec.SecretKeySpec;
 import javax.crypto.spec.GCMParameterSpec;
 
@@ -37,15 +31,28 @@ public class SHPClient {
         try (Socket socket = new Socket(host, port)) {
             DataInputStream in = new DataInputStream(socket.getInputStream());
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            String timestamp = Instant.now().toString(); // Current timestamp
-            // String timestamp = "2024-12-12T07:51:56.779656500Z"; //for testing replay
+            // String timestamp = Instant.now().toString(); // Current timestamp
+            String timestamp = "2024-12-12T20:14:56.779656500Z"; //for testing replay
 
-            String configFilePath = "config/cryptoconfig.txt";
-            byte[] keyBytes = loadKeyFromConfig(configFilePath);
-            System.out.println("Loaded Key Bytes (Server): " + Arrays.toString(keyBytes));
-            SecretKeySpec keySpec = new SecretKeySpec(keyBytes, "AES");
+            // String configFilePath = "config/cryptoconfig.txt";
+            // byte[] keyBytes = loadKeyFromConfig(configFilePath);
+            // System.out.println("Loaded Key Bytes (Server): " +
+            // Arrays.toString(keyBytes));
+            // SecretKeySpec keySpec = new SecretKeySpec(keyBytes, "AES");
 
             System.out.println("[Client] Connected to server.");
+
+            CryptoConfigLoader loader = new CryptoConfigLoader("config/cryptoconfig.txt");
+            // Load the encryption key from the config file
+            byte[] keyBytes = hexToBytes(loader.getEncryptionKey());
+            SecretKeySpec keySpec = new SecretKeySpec(keyBytes, "AES");
+            // Load the IV from the config file
+            byte[] ivBytes = hexToBytes(loader.getIV());
+
+            {
+                System.out.println("[Server] Loaded Key Bytes: " + Arrays.toString(keyBytes));
+                System.out.println("[Server] Loaded IV Bytes: " + Arrays.toString(ivBytes));
+            }
 
             // Authentication
             out.writeUTF(userId);
@@ -78,18 +85,19 @@ public class SHPClient {
 
                 // Initialize encryption cipher
                 Cipher encryptionCipher = Cipher.getInstance("AES/GCM/NoPadding");
-                GCMParameterSpec gcmSpec = new GCMParameterSpec(128, hexToBytes(CryptoConfigLoader.getIV()));
+                GCMParameterSpec gcmSpec = new GCMParameterSpec(128, ivBytes);
                 encryptionCipher.init(Cipher.ENCRYPT_MODE, keySpec, gcmSpec);
 
-                // send file content
-                try (CipherInputStream cis = new CipherInputStream(new FileInputStream(file), encryptionCipher)) {
+                try (FileInputStream fis = new FileInputStream(fileName);
+                        CipherOutputStream cos = new CipherOutputStream(out, encryptionCipher)) {
                     byte[] buffer = new byte[4096];
                     int bytesRead;
-                    while ((bytesRead = cis.read(buffer)) != -1) {
-                        out.write(buffer, 0, bytesRead);
-                        System.out.println("[Client] Sent bytes: " + bytesRead);
+                    while ((bytesRead = fis.read(buffer)) != -1) {
+                        cos.write(buffer, 0, bytesRead);
                     }
+                    cos.flush();
                 }
+
                 System.out.println("[Client] Upload completed.");
             } else if (operation.equalsIgnoreCase("DOWNLOAD")) {
                 System.out.println("[Client] Starting download for: " + fileName);
@@ -106,41 +114,36 @@ public class SHPClient {
 
                 // Initialize decryption cipher
                 Cipher decryptionCipher = Cipher.getInstance("AES/GCM/NoPadding");
-                GCMParameterSpec gcmSpec = new GCMParameterSpec(128, hexToBytes(CryptoConfigLoader.getIV()));
+                GCMParameterSpec gcmSpec = new GCMParameterSpec(128, ivBytes);
                 decryptionCipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec);
 
                 // Receive the file from the server
                 File downloadedFile = new File(saveFilePath);
-                try (CipherOutputStream cos = new CipherOutputStream(new FileOutputStream(saveFilePath),
-                        decryptionCipher);
-                        DataInputStream dataInputStream = new DataInputStream(socket.getInputStream())) {
+                try (CipherInputStream cis = new CipherInputStream(in, decryptionCipher);
+                        FileOutputStream fos = new FileOutputStream(saveFilePath)) {
 
                     byte[] buffer = new byte[4096];
                     int bytesRead;
-                    System.out.println("[Client] Receiving file...");
-                    while ((bytesRead = dataInputStream.read(buffer)) != -1) {
-                        cos.write(buffer, 0, bytesRead);
+                    while ((bytesRead = cis.read(buffer)) != -1) {
+                        fos.write(buffer, 0, bytesRead);
                     }
+                    fos.flush();
+                }
 
-                    System.out.println("[Client] File downloaded successfully: " + saveFilePath);
-                    System.out.println("[Client] Received server hash: " + serverHash);
+                System.out.println("[Client] File downloaded successfully: " + saveFilePath);
+                System.out.println("[Client] Received server hash: " + serverHash);
 
-                    if (!serverHash.isEmpty()) {
-                        String localHash = FileHashUtility.computeHash(downloadedFile.toPath());
-                        System.out.println("[Client] Local hash: " + localHash);
+                if (!serverHash.isEmpty()) {
+                    String localHash = FileHashUtility.computeHash(downloadedFile.toPath());
+                    System.out.println("[Client] Local hash: " + localHash);
 
-                        if (localHash.equals(serverHash)) {
-                            System.out.println("[Client] Hash verified successfully for: " + downloadedFile.getName());
-                        } else {
-                            throw new SecurityException("[Client] Hash mismatch! File integrity compromised.");
-                        }
+                    if (localHash.equals(serverHash)) {
+                        System.out.println("[Client] Hash verified successfully for: " + downloadedFile.getName());
                     } else {
-                        System.out.println("[Client] No hash provided by server.");
+                        throw new SecurityException("[Client] Hash mismatch! File integrity compromised.");
                     }
-                } catch (IOException e) {
-                    System.out.println("[Client] Error during download: " + e.getMessage());
-                } catch (Exception e) {
-                    System.out.println("[Client] Error during download: " + e.getMessage());
+                } else {
+                    System.out.println("[Client] No hash provided by server.");
                 }
             } else {
                 System.out.println("[Client] Unsupported operation: " + operation);
@@ -150,15 +153,6 @@ public class SHPClient {
         } catch (Exception e) {
             System.err.println("[Client] Error: " + e.getMessage());
         }
-    }
-
-    private static byte[] loadKeyFromConfig(String configFilePath) throws IOException {
-        Properties props = new Properties();
-        try (FileInputStream fis = new FileInputStream(configFilePath)) {
-            props.load(fis);
-        }
-        String keyHex = props.getProperty("EncryptionKey");
-        return hexToBytes(keyHex);
     }
 
     private static byte[] hexToBytes(String hex) {

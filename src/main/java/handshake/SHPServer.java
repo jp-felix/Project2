@@ -20,6 +20,7 @@ import main.java.utils.FileHashUtility;
 
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
+import javax.crypto.CipherOutputStream;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
@@ -33,22 +34,11 @@ public class SHPServer {
     private static UserDatabaseParser userDatabase;
     static String uploadDirectory = "files/upload";
     static String downloadDirectory = "files/download";
-    private static final SecretKey AES_KEY;
 
     // public SHPServer() throws Exception {
     // SHPServer.encryptionKey = new
     // SecretKeySpec(loadKeyFromConfig("config/cryptoconfig.txt"), "AES");
     // }
-
-    static {
-        try {
-            KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-            keyGen.init(256);
-            AES_KEY = keyGen.generateKey();
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to initialize AES key and IV", e);
-        }
-    }
 
     public static void main(String[] args) {
         int port = 8080;
@@ -74,6 +64,16 @@ public class SHPServer {
 
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             System.out.println("[Server] SHP Server is running on port " + port);
+
+            CryptoConfigLoader loader = new CryptoConfigLoader("config/cryptoconfig.txt");
+            // Load the encryption key from the config file
+            byte[] keyBytes = hexToBytes(loader.getEncryptionKey());
+            SecretKeySpec keySpec = new SecretKeySpec(keyBytes, "AES");
+            // Load the IV from the config file
+            byte[] ivBytes = hexToBytes(loader.getIV());
+
+            System.out.println("[Server] Loaded Key Bytes: " + Arrays.toString(keyBytes));
+            System.out.println("[Server] Loaded IV Bytes: " + Arrays.toString(ivBytes));
 
             while (true) {
                 try (Socket clientSocket = serverSocket.accept()) {
@@ -115,12 +115,33 @@ public class SHPServer {
 
                     if (operation.equalsIgnoreCase("UPLOAD")) {
                         System.out.println("[Server] Starting upload...");
-                        FileUpload upload = new FileUpload(clientSocket, uploadDirectory, AES_KEY, hexToBytes(CryptoConfigLoader.getIV()));
-                        String uploadedFileName = upload.uploadFile();
+                        // FileUpload upload = new FileUpload(clientSocket, uploadDirectory, keySpec,
+                        // ivBytes);
+                        // String uploadedFileName = upload.uploadFile();
 
-                        System.out.println("[Server] Uploaded file: " + uploadedFileName);
+                        String uploadedFileName = in.readUTF(); // Read the filename sent by the client
+                        System.out.println("[Server] Receiving file: " + uploadedFileName);
 
                         Path filePath = Paths.get(uploadDirectory, uploadedFileName);
+
+                        // Initialize the decryption cipher
+                        Cipher decryptionCipher = Cipher.getInstance("AES/GCM/NoPadding");
+                        GCMParameterSpec gcmSpec = new GCMParameterSpec(128, ivBytes);
+                        decryptionCipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec);
+
+                        try (CipherInputStream cis = new CipherInputStream(clientSocket.getInputStream(),
+                                decryptionCipher);
+                                FileOutputStream fos = new FileOutputStream(filePath.toString())) {
+                            byte[] buffer = new byte[4096];
+                            int bytesRead;
+                            while ((bytesRead = cis.read(buffer)) != -1) {
+                                fos.write(buffer, 0, bytesRead);
+                            }
+                            fos.flush();
+                            System.out.println("[Server] Upload complete for: " + filePath);
+                        }
+
+                        // Compute and save hash of the uploaded file
                         String hashValue = FileHashUtility.computeHash(filePath);
                         Path hashFilePath = Paths.get(filePath.toString() + ".hash");
                         Files.writeString(hashFilePath, hashValue);
@@ -157,26 +178,22 @@ public class SHPServer {
                         // Stream the file to the client
                         out.writeUTF("[Server] File found, preparing to send.");
 
-                        // Initialize decryption cipher
-                        Cipher decryptionCipher = Cipher.getInstance("AES/GCM/NoPadding");
-                        GCMParameterSpec spec = new GCMParameterSpec(128, hexToBytes(CryptoConfigLoader.getIV()));
-                        decryptionCipher.init(Cipher.DECRYPT_MODE, AES_KEY, spec);
+                        // Initialize the encryption cipher
+                        Cipher encryptionCipher = Cipher.getInstance("AES/GCM/NoPadding");
+                        GCMParameterSpec gcmSpec = new GCMParameterSpec(128, ivBytes);
+                        encryptionCipher.init(Cipher.ENCRYPT_MODE, keySpec, gcmSpec);
 
-                        try (CipherInputStream cis = new CipherInputStream(new FileInputStream(file), decryptionCipher);
-                                DataOutputStream dataOutputStream = new DataOutputStream(
-                                        clientSocket.getOutputStream())) {
-
-                            System.out.println("[Server] Sending file: " + fullFilePath);
+                        try (FileInputStream fis = new FileInputStream(file);
+                                CipherOutputStream cos = new CipherOutputStream(clientSocket.getOutputStream(),
+                                        encryptionCipher)) {
                             byte[] buffer = new byte[4096];
                             int bytesRead;
-
-                            while ((bytesRead = cis.read(buffer)) != -1) {
-                                dataOutputStream.write(buffer, 0, bytesRead);
+                            while ((bytesRead = fis.read(buffer)) != -1) {
+                                cos.write(buffer, 0, bytesRead);
                             }
+                            cos.flush();
 
                             System.out.println("[Server] File sent successfully: " + requestedFileName);
-                        } catch (IOException e) {
-                            System.out.println("[Server] Error during download: " + e.getMessage());
                         }
                     } else {
                         System.out.println("[Server] Invalid operation.");
@@ -187,7 +204,9 @@ public class SHPServer {
                     System.err.println("[Server] Error handling client: " + e.getMessage());
                 }
             }
-        } catch (IOException e) {
+        } catch (
+
+        IOException e) {
             System.err.println("[Server] Server error: " + e.getMessage());
         }
     }
@@ -216,9 +235,9 @@ public class SHPServer {
     }
 
     private static byte[] hexToBytes(String hex) {
-        if (hex == null || hex.length() % 2 != 0) {
-            throw new IllegalArgumentException("Invalid hexadecimal string.");
-        }
+        // if (hex == null || hex.length() % 2 != 0) {
+        // throw new IllegalArgumentException("Invalid hexadecimal string.");
+        // }
 
         int len = hex.length();
         byte[] data = new byte[len / 2];

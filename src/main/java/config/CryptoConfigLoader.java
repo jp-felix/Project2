@@ -36,11 +36,11 @@ public class CryptoConfigLoader {
         return properties.getProperty("HASH");
     }
 
-    public static String getEncryptionKey() {
+    public String getEncryptionKey() {
         return properties.getProperty("EncryptionKey");
     }
 
-    public static String getIV() {
+    public String getIV() {
         return properties.getProperty("IV");
     }
 
